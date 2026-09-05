@@ -1,26 +1,18 @@
 """Haji Business core package."""
 
 from .agent import HajiAgent
+from .ai_provider import AIProvider, OpenAICompatibleProvider, provider_from_env
 from .commands import Command, CommandEngine
 from .memory import MemoryStore
 from .models import ApprovalRequest, MemoryItem, RiskLevel, Task
 from .permissions import PermissionGate
 from .persistent_memory import PersistentMemoryStore
-from .runtime import HajiRuntime, RuntimeEvent
+from .runtime import HajiRuntime, RuntimeEvent, ScheduledModule
 from .tasks import TaskManager
 
 __all__ = [
-    "ApprovalRequest",
-    "Command",
-    "CommandEngine",
-    "HajiAgent",
-    "HajiRuntime",
-    "MemoryItem",
-    "MemoryStore",
-    "PersistentMemoryStore",
-    "PermissionGate",
-    "RiskLevel",
-    "RuntimeEvent",
-    "Task",
-    "TaskManager",
+    "ApprovalRequest", "Command", "CommandEngine", "HajiAgent", "AIProvider",
+    "OpenAICompatibleProvider", "provider_from_env", "HajiRuntime", "RuntimeEvent",
+    "ScheduledModule", "MemoryItem", "MemoryStore", "PersistentMemoryStore",
+    "PermissionGate", "RiskLevel", "Task", "TaskManager",
 ]
