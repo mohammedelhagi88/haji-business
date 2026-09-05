@@ -1,0 +1,12 @@
+{
+  "expo": {
+    "name": "Haji AI",
+    "slug": "haji-ai",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "dark",
+    "ios": { "supportsTablet": true },
+    "android": { "adaptiveIcon": { "backgroundColor": "#07111f" } },
+    "plugins": ["expo-image-picker"]
+  }
+}
