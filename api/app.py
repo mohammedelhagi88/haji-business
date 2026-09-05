@@ -25,7 +25,7 @@ class HajiApp:
         self.memory=PersistentMemoryStore(db); self.approvals=PersistentApprovalStore(db,ttl_seconds=max(60,int(os.getenv("HAJI_APPROVAL_TTL_SECONDS","900"))))
         self.tasks=TaskManager(runtime=self.runtime); self.notifications=NotificationService(self.runtime); self.mobile_notifications=MobileNotificationInbox()
         self.notifications.register(lambda n:self.mobile_notifications.push({"title":n.title,"message":n.message,"level":n.level,"created_at":n.created_at.isoformat(),"metadata":n.metadata}))
-        self.provider=provider_from_env(); self.agent=HajiAgent(memory=self.memory,tasks=self.tasks,runtime=self.runtime,provider=self.provider)
+        self.provider=provider_from_env(); self.agent=HajiAgent(memory=self.memory,tasks=self.tasks,runtime=self.runtime,provider=self.provider,approval_store=self.approvals)
         self.trading_approvals=TradingApprovalBridge(); self.trading_provider=BinancePublicMarketData(base_url=os.getenv("HAJI_MARKET_DATA_URL","https://api.binance.com"),interval=os.getenv("HAJI_MARKET_INTERVAL","1m"))
         self.trading=TradingService(self.trading_provider,approvals=self.trading_approvals); self.paper_broker=PaperBroker(); self.runtime.start()
     def message(self,text,image=None): return self.agent.handle(text=text,image=image)
