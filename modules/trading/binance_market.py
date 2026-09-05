@@ -14,7 +14,7 @@ from .market_data import MarketBar, MarketDataProvider, MarketSnapshotRequest
 
 
 class BinancePublicMarketData(MarketDataProvider):
-    def __init__(self, base_url: str = "https://api.binance.com", timeout: float = 8.0, interval: str = "1h"):
+    def __init__(self, base_url: str = "https://api.binance.com", timeout: float = 8.0, interval: str = "1m"):
         self.base_url = base_url.rstrip("/")
         self.timeout = timeout
         self.interval = interval
