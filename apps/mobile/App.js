@@ -73,11 +73,28 @@ export default function App() {
     finally { setApprovalBusy(null); }
   };
 
-  const pickImage = async () => {
-    const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
-    if (!permission.granted) return;
-    const result = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ['images'], quality: 0.85 });
-    if (!result.canceled) setImageUri(result.assets[0].uri);
+  const chooseImage = async (source) => {
+    try {
+      let result;
+      if (source === 'camera') {
+        const permission = await ImagePicker.requestCameraPermissionsAsync();
+        if (!permission.granted) {
+          setMessages((items) => [...items, { role: 'haji', text: 'نحتاج إذن الكاميرا باش نصوّر الصورة.' }]);
+          return;
+        }
+        result = await ImagePicker.launchCameraAsync({ mediaTypes: ['images'], quality: 0.85 });
+      } else {
+        const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
+        if (!permission.granted) {
+          setMessages((items) => [...items, { role: 'haji', text: 'نحتاج إذن الصور باش نختار صورة من الجهاز.' }]);
+          return;
+        }
+        result = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ['images'], quality: 0.85 });
+      }
+      if (!result.canceled && result.assets?.[0]?.uri) setImageUri(result.assets[0].uri);
+    } catch (error) {
+      setMessages((items) => [...items, { role: 'haji', text: 'ما قدرتش نفتح الكاميرا أو الصور حالياً.' }]);
+    }
   };
 
   return (
@@ -92,7 +109,8 @@ export default function App() {
         {imageUri && <Image source={{ uri: imageUri }} style={styles.preview} />}
       </ScrollView>
       <View style={styles.composer}>
-        <Pressable style={styles.iconButton} onPress={pickImage}><Text>📷</Text></Pressable>
+        <Pressable style={styles.iconButton} onPress={() => chooseImage('gallery')}><Text>🖼️</Text></Pressable>
+        <Pressable style={styles.iconButton} onPress={() => chooseImage('camera')}><Text>📷</Text></Pressable>
         <TextInput value={message} onChangeText={setMessage} placeholder="كلم حاجي..." placeholderTextColor="#7b8794" style={styles.input} multiline />
         <Pressable style={[styles.voice, recording && styles.recording]} onPress={recording ? stopVoice : startVoice} disabled={busy}><Text style={styles.white}>{recording ? '⏹️' : '🎙️'}</Text></Pressable>
         <Pressable style={styles.send} onPress={send} disabled={busy}>{busy ? <ActivityIndicator color="#fff" /> : <Text style={styles.white}>➤</Text>}</Pressable>
