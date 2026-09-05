@@ -7,12 +7,13 @@ forcing a web framework. A framework adapter can be added later.
 from __future__ import annotations
 
 import json
-from dataclasses import asdict
+from email.parser import BytesParser
+from email.policy import default
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from urllib.parse import parse_qs
 
+from core.agent import HajiAgent
 from core.memory import MemoryStore
-from core.runtime import HajiRuntime, RuntimeEvent
+from core.runtime import HajiRuntime
 from core.tasks import TaskManager
 
 
@@ -21,18 +22,15 @@ class HajiApp:
         self.runtime = HajiRuntime()
         self.memory = MemoryStore()
         self.tasks = TaskManager()
+        self.agent = HajiAgent(
+            memory=self.memory,
+            tasks=self.tasks,
+            runtime=self.runtime,
+        )
         self.runtime.start()
 
-    def message(self, text: str, image: str | None = None) -> dict:
-        self.runtime.emit(RuntimeEvent("agent.message", {"text": text, "has_image": bool(image)}))
-        if image:
-            answer = "وصلتني الصورة مع طلبك. جاهز نمررها لمحرك الرؤية للتحليل."
-        elif text.strip():
-            self.memory.set("last_user_message", text.strip())
-            answer = f"تمام، فهمتك: {text.strip()}"
-        else:
-            answer = "قولّي شن تبي نديرلك."
-        return {"text": answer, "requiresApproval": False}
+    def message(self, text: str, image: bytes | None = None) -> dict:
+        return self.agent.handle(text=text, image=image)
 
 
 app = HajiApp()
@@ -40,7 +38,7 @@ app = HajiApp()
 
 class Handler(BaseHTTPRequestHandler):
     def _json(self, status: int, payload: dict) -> None:
-        data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+        data = json.dumps(payload, ensure_ascii=False, default=str).encode("utf-8")
         self.send_response(status)
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Content-Length", str(len(data)))
@@ -48,28 +46,61 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(data)
 
+    def _read_body(self) -> bytes:
+        try:
+            length = int(self.headers.get("Content-Length", "0"))
+        except ValueError:
+            length = 0
+        return self.rfile.read(max(0, length))
+
+    def _parse_multipart(self, raw: bytes, content_type: str) -> tuple[str, bytes | None]:
+        # email's MIME parser is in the Python standard library and correctly
+        # handles the multipart/form-data boundary used by React Native FormData.
+        header = f"Content-Type: {content_type}\r\nMIME-Version: 1.0\r\n\r\n".encode()
+        message = BytesParser(policy=default).parsebytes(header + raw)
+        text = ""
+        image: bytes | None = None
+        if message.is_multipart():
+            for part in message.iter_parts():
+                name = part.get_param("name", header="content-disposition")
+                payload = part.get_payload(decode=True) or b""
+                if name == "text":
+                    text = payload.decode("utf-8", errors="replace")
+                elif name == "image":
+                    image = payload
+        return text, image
+
     def do_POST(self) -> None:
         if self.path != "/v1/agent/message":
             self._json(404, {"error": "not_found"})
             return
-        length = int(self.headers.get("Content-Length", "0"))
-        raw = self.rfile.read(length)
+
+        raw = self._read_body()
         content_type = self.headers.get("Content-Type", "")
         text = ""
-        has_image = False
+        image: bytes | None = None
+
         if "application/json" in content_type:
             try:
                 body = json.loads(raw.decode("utf-8"))
                 text = str(body.get("text", ""))
-                has_image = bool(body.get("image"))
+                encoded_image = body.get("image")
+                if encoded_image:
+                    image = str(encoded_image).encode("utf-8")
             except (ValueError, UnicodeDecodeError):
                 self._json(400, {"error": "invalid_json"})
                 return
+        elif "multipart/form-data" in content_type:
+            try:
+                text, image = self._parse_multipart(raw, content_type)
+            except Exception:
+                self._json(400, {"error": "invalid_multipart"})
+                return
         else:
-            fields = parse_qs(raw.decode("utf-8", errors="ignore"))
-            text = fields.get("text", [""])[0]
-            has_image = bool(fields.get("image", [""])[0])
-        self._json(200, app.message(text, "image" if has_image else None))
+            self._json(415, {"error": "unsupported_content_type"})
+            return
+
+        self._json(200, app.message(text, image))
 
     def do_OPTIONS(self) -> None:
         self.send_response(204)
