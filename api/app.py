@@ -1,4 +1,4 @@
-"""Minimal Haji HTTP API for the mobile client."""
+"""Minimal Haji HTTP API for the mobile client and safe trading analysis."""
 from __future__ import annotations
 
 import base64
@@ -6,6 +6,7 @@ import binascii
 import hmac
 import json
 import os
+from dataclasses import asdict
 from email.parser import BytesParser
 from email.policy import default
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -15,6 +16,7 @@ from core.ai_provider import provider_from_env
 from core.persistent_memory import PersistentMemoryStore
 from core.runtime import HajiRuntime
 from core.tasks import TaskManager
+from modules.trading import BinancePublicMarketData, PaperBroker, TradingApprovalBridge, TradingService
 
 
 MAX_BODY_BYTES = max(1024, int(os.getenv("HAJI_MAX_BODY_BYTES", str(10 * 1024 * 1024))))
@@ -27,6 +29,14 @@ class HajiApp:
         self.tasks = TaskManager()
         self.provider = provider_from_env()
         self.agent = HajiAgent(memory=self.memory, tasks=self.tasks, runtime=self.runtime, provider=self.provider)
+        self.trading_approvals = TradingApprovalBridge()
+        self.trading_provider = BinancePublicMarketData(
+            base_url=os.getenv("HAJI_MARKET_DATA_URL", "https://api.binance.com"),
+            interval=os.getenv("HAJI_MARKET_INTERVAL", "1h"),
+        )
+        self.trading = TradingService(self.trading_provider, approvals=self.trading_approvals)
+        self.paper_broker = PaperBroker()
+        self._trades: dict[str, object] = {}
         self.runtime.start()
 
     def message(self, text: str, image: bytes | None = None) -> dict:
@@ -34,6 +44,33 @@ class HajiApp:
 
     def approve(self, approval_id: str) -> dict:
         return self.agent.approve(approval_id)
+
+    def trading_analyze(self, symbols: list[str], limit: int = 200) -> dict:
+        opportunities = self.trading.analyze(symbols, limit=limit)
+        result = []
+        from uuid import uuid4
+        for opportunity in opportunities:
+            approval_id = uuid4().hex
+            self._trades[approval_id] = opportunity
+            result.append({
+                "approvalId": approval_id,
+                "candidate": asdict(opportunity.candidate),
+                "approval": asdict(opportunity.approval),
+            })
+        return {"ok": True, "opportunities": result, "count": len(result), "mode": "paper_only"}
+
+    def trading_approve(self, approval_id: str) -> dict:
+        opportunity = self._trades.get(approval_id)
+        if opportunity is None:
+            return {"ok": False, "error": "trading_approval_not_found"}
+        approved = self.trading_approvals.approve(opportunity.approval)
+        executed = self.paper_broker.execute(
+            __import__("modules.trading", fromlist=["ApprovedTrade"]).ApprovedTrade(opportunity.candidate, approved)
+        )
+        self.runtime.emit(__import__("core.runtime", fromlist=["RuntimeEvent"]).RuntimeEvent(
+            "trading.paper_executed", {"approval_id": approval_id, "symbol": opportunity.candidate.symbol}
+        ))
+        return {"ok": True, "approvalId": approval_id, "execution": asdict(executed)}
 
 
 app = HajiApp()
@@ -107,10 +144,22 @@ class Handler(BaseHTTPRequestHandler):
         if not self._require_auth():
             return
         if self.path.startswith("/v1/agent/approval/"):
+            self._json(200, app.approve(self.path.rsplit("/", 1)[-1]))
+            return
+        if self.path.startswith("/v1/trading/approval/"):
+            self._json(200, app.trading_approve(self.path.rsplit("/", 1)[-1]))
+            return
+        if self.path == "/v1/trading/analyze":
+            raw = self._read_body()
             try:
-                self._json(200, app.approve(self.path.rsplit("/", 1)[-1]))
-            except (KeyError, ValueError):
-                self._json(404, {"error": "approval_not_found"})
+                body = json.loads(raw.decode("utf-8")) if raw else {}
+                symbols = body.get("symbols", [])
+                if not isinstance(symbols, list) or not symbols:
+                    raise ValueError("symbols_required")
+                limit = int(body.get("limit", 200))
+                self._json(200, app.trading_analyze([str(s) for s in symbols], limit=limit))
+            except Exception as exc:
+                self._json(400, {"error": "trading_analysis_failed", "detail": str(exc)})
             return
         if self.path == "/v1/agent/voice":
             raw = self._read_body()
@@ -166,7 +215,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self) -> None:
         if self.path == "/health":
-            self._json(200, {"status": "ok", "provider_configured": app.provider is not None})
+            self._json(200, {"status": "ok", "provider_configured": app.provider is not None, "market_data": "binance_public", "trading_mode": "paper_only"})
             return
         if not self._require_auth():
             return
