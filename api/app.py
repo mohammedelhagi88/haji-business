@@ -50,8 +50,8 @@ class Handler(BaseHTTPRequestHandler):
     def _json(self,status,payload):
         data=json.dumps(payload,ensure_ascii=False,default=str).encode(); self.send_response(status); self.send_header("Content-Type","application/json; charset=utf-8"); self.send_header("Content-Length",str(len(data))); self.send_header("Access-Control-Allow-Origin",self._cors_origin()); self.send_header("Access-Control-Allow-Headers","Content-Type, Authorization, X-Haji-API-Key"); self.end_headers(); self.wfile.write(data)
     def _authorized(self):
-        expected=os.getenv("HAJI_API_TOKEN","");
-        if not expected:return True
+        expected=os.getenv("HAJI_API_TOKEN","")
+        if not expected:return os.getenv("HAJI_ENV","development").lower()!="production"
         auth=self.headers.get("Authorization",""); supplied=auth[7:].strip() if auth.lower().startswith("bearer ") else self.headers.get("X-Haji-API-Key",""); return bool(supplied) and hmac.compare_digest(supplied,expected)
     def _require_auth(self):
         if self.path.startswith("/v1/") and not self._authorized(): self._json(401,{"error":"unauthorized"}); return False
@@ -111,7 +111,7 @@ class Handler(BaseHTTPRequestHandler):
         except (ValueError,UnicodeDecodeError):self._json(400,{"error":"invalid_json_or_image"});return
         self._json(200,app.message(text,image))
     def do_GET(self):
-        if self.path=="/health":self._json(200,{"status":"ok","provider_configured":app.provider is not None,"market_data":"binance_public","trading_mode":"paper_only"});return
+        if self.path=="/health":self._json(200,{"status":"ok","provider_configured":app.provider is not None,"market_data":"binance_public","trading_mode":"paper_only","auth_required_in_production":True});return
         if not self._require_auth():return
         if self.path=="/v1/notifications":self._json(200,{"ok":True,"notifications":app.mobile_notifications.list()});return
         if self.path=="/v1/runtime/status":self._json(200,{**app.runtime.status(),"modules":app.modules.capabilities()});return
