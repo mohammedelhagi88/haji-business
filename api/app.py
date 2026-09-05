@@ -7,6 +7,7 @@ import hmac
 import json
 import os
 from dataclasses import asdict
+from datetime import datetime
 from email.parser import BytesParser
 from email.policy import default
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -14,11 +15,13 @@ from uuid import uuid4
 
 from core.agent import HajiAgent
 from core.ai_provider import provider_from_env
+from core.approval_store import PersistentApprovalStore
 from core.module_bootstrap import build_default_registry
+from core.models import ApprovalRequest, RiskLevel
 from core.persistent_memory import PersistentMemoryStore
 from core.runtime import HajiRuntime, RuntimeEvent
 from core.tasks import TaskManager
-from modules.trading import ApprovedTrade, BinancePublicMarketData, PaperBroker, TradingApprovalBridge, TradingService
+from modules.trading import ApprovedTrade, BinancePublicMarketData, PaperBroker, TradeCandidate, TradingApprovalBridge, TradingService
 
 
 MAX_BODY_BYTES = max(1024, int(os.getenv("HAJI_MAX_BODY_BYTES", str(10 * 1024 * 1024))))
@@ -28,7 +31,12 @@ class HajiApp:
     def __init__(self) -> None:
         self.runtime = HajiRuntime()
         self.modules = build_default_registry()
-        self.memory = PersistentMemoryStore(os.getenv("HAJI_MEMORY_DB", "haji_memory.sqlite3"))
+        memory_db = os.getenv("HAJI_MEMORY_DB", "haji_memory.sqlite3")
+        self.memory = PersistentMemoryStore(memory_db)
+        self.approvals = PersistentApprovalStore(
+            memory_db,
+            ttl_seconds=max(60, int(os.getenv("HAJI_APPROVAL_TTL_SECONDS", "900"))),
+        )
         self.tasks = TaskManager()
         self.provider = provider_from_env()
         self.agent = HajiAgent(memory=self.memory, tasks=self.tasks, runtime=self.runtime, provider=self.provider)
@@ -39,8 +47,6 @@ class HajiApp:
         )
         self.trading = TradingService(self.trading_provider, approvals=self.trading_approvals)
         self.paper_broker = PaperBroker()
-        self._trades: dict[str, object] = {}
-        self._consumed_trade_approvals: set[str] = set()
         self.runtime.start()
 
     def message(self, text: str, image: bytes | None = None) -> dict:
@@ -54,7 +60,13 @@ class HajiApp:
         result = []
         for opportunity in opportunities:
             approval_id = uuid4().hex
-            self._trades[approval_id] = opportunity
+            self.approvals.put(
+                approval_id,
+                opportunity.approval.action,
+                opportunity.approval.risk.value,
+                opportunity.approval.reason,
+                asdict(opportunity.candidate),
+            )
             result.append({
                 "approvalId": approval_id,
                 "candidate": asdict(opportunity.candidate),
@@ -63,17 +75,24 @@ class HajiApp:
         return {"ok": True, "opportunities": result, "count": len(result), "mode": "paper_only"}
 
     def trading_approve(self, approval_id: str) -> dict:
-        if approval_id in self._consumed_trade_approvals:
-            return {"ok": False, "error": "trading_approval_already_consumed"}
-        opportunity = self._trades.get(approval_id)
-        if opportunity is None:
-            return {"ok": False, "error": "trading_approval_not_found"}
-        approved = self.trading_approvals.approve(opportunity.approval)
-        executed = self.paper_broker.execute(ApprovedTrade(opportunity.candidate, approved))
-        self._consumed_trade_approvals.add(approval_id)
-        self._trades.pop(approval_id, None)
+        record = self.approvals.consume(approval_id)
+        if record is None:
+            return {"ok": False, "error": "trading_approval_not_found_or_expired"}
+        try:
+            candidate = TradeCandidate(**record["payload"])
+            request = ApprovalRequest(
+                action=record["action"],
+                risk=RiskLevel(record["risk"]),
+                reason=record["reason"],
+                created_at=datetime.fromisoformat(record["created_at"]),
+                approved=False,
+            )
+            approved = self.trading_approvals.approve(request)
+            executed = self.paper_broker.execute(ApprovedTrade(candidate, approved))
+        except Exception as exc:
+            return {"ok": False, "error": "trading_execution_failed", "detail": str(exc)}
         self.runtime.emit(RuntimeEvent(
-            "trading.paper_executed", {"approval_id": approval_id, "symbol": opportunity.candidate.symbol}
+            "trading.paper_executed", {"approval_id": approval_id, "symbol": candidate.symbol}
         ))
         return {"ok": True, "approvalId": approval_id, "execution": asdict(executed)}
 
