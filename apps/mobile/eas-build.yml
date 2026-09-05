@@ -1,0 +1,21 @@
+name: Haji iOS Build
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build-ios:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Install dependencies
+        working-directory: apps/mobile
+        run: npm install
+      - name: Build iOS with EAS
+        working-directory: apps/mobile
+        env:
+          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+        run: npx eas-cli@latest build --platform ios --profile production --non-interactive
