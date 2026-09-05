@@ -29,3 +29,13 @@ export async function sendToHaji({ text = '', imageUri = null }) {
   if (!response.ok) throw new Error(`Haji API error: ${response.status}`);
   return response.json();
 }
+
+export async function approveWithHaji(approvalId) {
+  if (!API_URL || !approvalId) return { ok: false, error: 'api_or_approval_missing' };
+  const response = await fetch(`${API_URL}/v1/agent/approval/${encodeURIComponent(approvalId)}`, {
+    method: 'POST',
+    headers: { Accept: 'application/json' },
+  });
+  if (!response.ok) throw new Error(`Haji approval error: ${response.status}`);
+  return response.json();
+}
