@@ -7,12 +7,15 @@
     "userInterfaceStyle": "dark",
     "ios": {
       "supportsTablet": true,
+      "bundleIdentifier": "com.hajibusiness.hajiai",
       "infoPlist": {
-        "NSMicrophoneUsageDescription": "حاجي يحتاج الميكروفون باش يسمع أوامرك الصوتية."
+        "NSMicrophoneUsageDescription": "حاجي يحتاج الميكروفون باش يسمع أوامرك الصوتية.",
+        "NSCameraUsageDescription": "حاجي يحتاج الكاميرا باش يحلل الصور والمستندات بإذنك."
       }
     },
     "android": {
-      "permissions": ["RECORD_AUDIO"],
+      "package": "com.hajibusiness.hajiai",
+      "permissions": ["RECORD_AUDIO", "CAMERA"],
       "adaptiveIcon": { "backgroundColor": "#07111f" }
     },
     "plugins": ["expo-image-picker"]
