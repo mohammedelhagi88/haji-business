@@ -53,8 +53,9 @@ class PersistentApprovalStore:
             return None
         if datetime.utcnow() - created > timedelta(seconds=self.ttl_seconds):
             return None
-        self._db.execute("UPDATE approvals SET consumed=1 WHERE approval_id=? AND consumed=0", (approval_id,))
-        if self._db.total_changes <= 0:
+        cursor = self._db.execute("UPDATE approvals SET consumed=1 WHERE approval_id=? AND consumed=0", (approval_id,))
+        if cursor.rowcount != 1:
+            self._db.rollback()
             return None
         self._db.commit()
         return {
