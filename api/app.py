@@ -14,6 +14,7 @@ from uuid import uuid4
 
 from core.agent import HajiAgent
 from core.ai_provider import provider_from_env
+from core.module_bootstrap import build_default_registry
 from core.persistent_memory import PersistentMemoryStore
 from core.runtime import HajiRuntime, RuntimeEvent
 from core.tasks import TaskManager
@@ -26,6 +27,7 @@ MAX_BODY_BYTES = max(1024, int(os.getenv("HAJI_MAX_BODY_BYTES", str(10 * 1024 * 
 class HajiApp:
     def __init__(self) -> None:
         self.runtime = HajiRuntime()
+        self.modules = build_default_registry()
         self.memory = PersistentMemoryStore(os.getenv("HAJI_MEMORY_DB", "haji_memory.sqlite3"))
         self.tasks = TaskManager()
         self.provider = provider_from_env()
@@ -33,7 +35,7 @@ class HajiApp:
         self.trading_approvals = TradingApprovalBridge()
         self.trading_provider = BinancePublicMarketData(
             base_url=os.getenv("HAJI_MARKET_DATA_URL", "https://api.binance.com"),
-            interval=os.getenv("HAJI_MARKET_INTERVAL", "1h"),
+            interval=os.getenv("HAJI_MARKET_INTERVAL", "1m"),
         )
         self.trading = TradingService(self.trading_provider, approvals=self.trading_approvals)
         self.paper_broker = PaperBroker()
@@ -67,8 +69,7 @@ class HajiApp:
         if opportunity is None:
             return {"ok": False, "error": "trading_approval_not_found"}
         approved = self.trading_approvals.approve(opportunity.approval)
-        trade = self.trading_approvals.approved_trade(opportunity.candidate, approved)
-        executed = self.paper_broker.execute(trade)
+        executed = self.paper_broker.execute(ApprovedTrade(opportunity.candidate, approved))
         self._consumed_trade_approvals.add(approval_id)
         self._trades.pop(approval_id, None)
         self.runtime.emit(RuntimeEvent(
@@ -163,7 +164,7 @@ class Handler(BaseHTTPRequestHandler):
                 limit = int(body.get("limit", 200))
                 self._json(200, app.trading_analyze([str(s) for s in symbols], limit=limit))
             except ValueError as exc:
-                self._json(400, {"error": "trading_analysis_invalid_request", "detail": str(exc)})
+                self._json(400, {"error": "trading_analysis_failed", "detail": str(exc)})
             except Exception:
                 self._json(502, {"error": "trading_analysis_failed"})
             return
@@ -226,7 +227,10 @@ class Handler(BaseHTTPRequestHandler):
         if not self._require_auth():
             return
         if self.path == "/v1/runtime/status":
-            self._json(200, self.server.haji_app.runtime.status())
+            self._json(200, {**app.runtime.status(), "modules": app.modules.capabilities()})
+            return
+        if self.path == "/v1/modules":
+            self._json(200, {"ok": True, "modules": app.modules.capabilities()})
             return
         self._json(404, {"error": "not_found"})
 
