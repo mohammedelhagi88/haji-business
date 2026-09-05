@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
@@ -23,8 +23,8 @@ def test_scheduled_module_runs_when_due_only():
     start = runtime._scheduled["market"].next_run
 
     runtime.tick(start)
-    runtime.tick(start.replace(second=start.second + 5))
-    runtime.tick(start.replace(second=start.second + 10))
+    runtime.tick(start + timedelta(seconds=5))
+    runtime.tick(start + timedelta(seconds=10))
 
     assert len(calls) == 2
 
