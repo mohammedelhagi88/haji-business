@@ -18,6 +18,13 @@ export async function sendVoiceToHaji(audioUri) {
   return response.json();
 }
 
+export async function getNotifications() {
+  if (!API_URL) return { ok: true, notifications: [] };
+  const response = await fetch(`${API_URL}/v1/notifications`, { method: 'GET', headers: { Accept: 'application/json' } });
+  if (!response.ok) throw new Error(`Haji notifications error: ${response.status}`);
+  return response.json();
+}
+
 export async function approveWithHaji(approvalId) {
   if (!API_URL || !approvalId) return { ok: false, error: 'api_or_approval_missing' };
   const response = await fetch(`${API_URL}/v1/agent/approval/${encodeURIComponent(approvalId)}`, { method: 'POST', headers: { Accept: 'application/json' } });
