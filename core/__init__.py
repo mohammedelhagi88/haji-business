@@ -5,6 +5,7 @@ from .ai_provider import AIProvider, OpenAICompatibleProvider, provider_from_env
 from .commands import Command, CommandEngine
 from .memory import MemoryStore
 from .models import ApprovalRequest, MemoryItem, RiskLevel, Task
+from .module_registry import ModuleRegistry, ModuleSpec
 from .permissions import PermissionGate
 from .persistent_memory import PersistentMemoryStore
 from .runtime import HajiRuntime, RuntimeEvent, ScheduledModule
@@ -14,5 +15,5 @@ __all__ = [
     "ApprovalRequest", "Command", "CommandEngine", "HajiAgent", "AIProvider",
     "OpenAICompatibleProvider", "provider_from_env", "HajiRuntime", "RuntimeEvent",
     "ScheduledModule", "MemoryItem", "MemoryStore", "PersistentMemoryStore",
-    "PermissionGate", "RiskLevel", "Task", "TaskManager",
+    "ModuleRegistry", "ModuleSpec", "PermissionGate", "RiskLevel", "Task", "TaskManager",
 ]
