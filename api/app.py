@@ -10,13 +10,14 @@ from dataclasses import asdict
 from email.parser import BytesParser
 from email.policy import default
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from uuid import uuid4
 
 from core.agent import HajiAgent
 from core.ai_provider import provider_from_env
 from core.persistent_memory import PersistentMemoryStore
-from core.runtime import HajiRuntime
+from core.runtime import HajiRuntime, RuntimeEvent
 from core.tasks import TaskManager
-from modules.trading import BinancePublicMarketData, PaperBroker, TradingApprovalBridge, TradingService
+from modules.trading import ApprovedTrade, BinancePublicMarketData, PaperBroker, TradingApprovalBridge, TradingService
 
 
 MAX_BODY_BYTES = max(1024, int(os.getenv("HAJI_MAX_BODY_BYTES", str(10 * 1024 * 1024))))
@@ -37,6 +38,7 @@ class HajiApp:
         self.trading = TradingService(self.trading_provider, approvals=self.trading_approvals)
         self.paper_broker = PaperBroker()
         self._trades: dict[str, object] = {}
+        self._consumed_trade_approvals: set[str] = set()
         self.runtime.start()
 
     def message(self, text: str, image: bytes | None = None) -> dict:
@@ -48,7 +50,6 @@ class HajiApp:
     def trading_analyze(self, symbols: list[str], limit: int = 200) -> dict:
         opportunities = self.trading.analyze(symbols, limit=limit)
         result = []
-        from uuid import uuid4
         for opportunity in opportunities:
             approval_id = uuid4().hex
             self._trades[approval_id] = opportunity
@@ -60,14 +61,17 @@ class HajiApp:
         return {"ok": True, "opportunities": result, "count": len(result), "mode": "paper_only"}
 
     def trading_approve(self, approval_id: str) -> dict:
+        if approval_id in self._consumed_trade_approvals:
+            return {"ok": False, "error": "trading_approval_already_consumed"}
         opportunity = self._trades.get(approval_id)
         if opportunity is None:
             return {"ok": False, "error": "trading_approval_not_found"}
         approved = self.trading_approvals.approve(opportunity.approval)
-        executed = self.paper_broker.execute(
-            __import__("modules.trading", fromlist=["ApprovedTrade"]).ApprovedTrade(opportunity.candidate, approved)
-        )
-        self.runtime.emit(__import__("core.runtime", fromlist=["RuntimeEvent"]).RuntimeEvent(
+        trade = self.trading_approvals.approved_trade(opportunity.candidate, approved)
+        executed = self.paper_broker.execute(trade)
+        self._consumed_trade_approvals.add(approval_id)
+        self._trades.pop(approval_id, None)
+        self.runtime.emit(RuntimeEvent(
             "trading.paper_executed", {"approval_id": approval_id, "symbol": opportunity.candidate.symbol}
         ))
         return {"ok": True, "approvalId": approval_id, "execution": asdict(executed)}
@@ -158,8 +162,10 @@ class Handler(BaseHTTPRequestHandler):
                     raise ValueError("symbols_required")
                 limit = int(body.get("limit", 200))
                 self._json(200, app.trading_analyze([str(s) for s in symbols], limit=limit))
-            except Exception as exc:
-                self._json(400, {"error": "trading_analysis_failed", "detail": str(exc)})
+            except ValueError as exc:
+                self._json(400, {"error": "trading_analysis_invalid_request", "detail": str(exc)})
+            except Exception:
+                self._json(502, {"error": "trading_analysis_failed"})
             return
         if self.path == "/v1/agent/voice":
             raw = self._read_body()
