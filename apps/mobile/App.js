@@ -2,13 +2,14 @@ import React, { useState } from 'react';
 import { SafeAreaView, View, Text, TextInput, Pressable, Image, ScrollView, StyleSheet, ActivityIndicator } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
 import * as Speech from 'expo-speech';
-import { sendToHaji } from './src/agent';
+import { approveWithHaji, sendToHaji } from './src/agent';
 
 export default function App() {
   const [message, setMessage] = useState('');
   const [messages, setMessages] = useState([{ role: 'haji', text: 'هلا بيك 👋 أنا حاجي. شن تبي نديرلك اليوم؟' }]);
   const [imageUri, setImageUri] = useState(null);
   const [busy, setBusy] = useState(false);
+  const [approvalBusy, setApprovalBusy] = useState(null);
 
   const send = async () => {
     const text = message.trim();
@@ -21,13 +22,28 @@ export default function App() {
     try {
       const result = await sendToHaji({ text, imageUri: attachedImage });
       const answer = result.text || result.message || 'تم استلام الطلب.';
-      setMessages((items) => [...items, { role: 'haji', text: answer, approval: result.requiresApproval }]);
+      setMessages((items) => [...items, {
+        role: 'haji', text: answer, approval: result.requiresApproval, approvalId: result.approvalId,
+      }]);
       Speech.speak(answer, { language: 'ar', rate: 0.95 });
     } catch (error) {
       const answer = 'صار خلل في الاتصال بحاجي. الطلب ما تنفذش.';
       setMessages((items) => [...items, { role: 'haji', text: answer }]);
       Speech.speak(answer, { language: 'ar' });
     } finally { setBusy(false); }
+  };
+
+  const approve = async (approvalId, index) => {
+    if (!approvalId || approvalBusy) return;
+    setApprovalBusy(approvalId);
+    try {
+      const result = await approveWithHaji(approvalId);
+      setMessages((items) => items.map((item, i) => i === index
+        ? { ...item, approval: false, approved: result.ok, text: `${item.text}\n\n✅ تمت الموافقة.` }
+        : item));
+    } catch (error) {
+      setMessages((items) => [...items, { role: 'haji', text: 'ما قدرتش نسجل الموافقة حالياً.' }]);
+    } finally { setApprovalBusy(null); }
   };
 
   const pickImage = async () => {
@@ -44,7 +60,12 @@ export default function App() {
         {messages.map((item, index) => <View key={index} style={[styles.bubble, item.role === 'user' ? styles.user : styles.haji]}>
           {item.image && <Image source={{ uri: item.image }} style={styles.messageImage} />}
           <Text style={styles.bubbleText}>{item.text}</Text>
-          {item.approval && <Text style={styles.approval}>⚠️ يحتاج موافقة منك قبل التنفيذ</Text>}
+          {item.approval && <>
+            <Text style={styles.approval}>⚠️ هذا الإجراء يحتاج موافقتك الصريحة</Text>
+            <Pressable style={styles.approve} onPress={() => approve(item.approvalId, index)} disabled={approvalBusy === item.approvalId}>
+              {approvalBusy === item.approvalId ? <ActivityIndicator color="#fff" /> : <Text style={styles.white}>موافقة</Text>}
+            </Pressable>
+          </>}
         </View>)}
         {imageUri && <Image source={{ uri: imageUri }} style={styles.preview} />}
       </ScrollView>
@@ -62,7 +83,8 @@ const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: '#07111f' }, header: { padding: 22, paddingTop: 28, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', borderBottomWidth: 1, borderBottomColor: '#17263a' },
   title: { color: '#fff', fontSize: 28, fontWeight: '800' }, status: { color: '#55d68a', marginTop: 4, fontSize: 13 }, brain: { fontSize: 30 }, chat: { padding: 18, gap: 12, paddingBottom: 25 },
   bubble: { maxWidth: '84%', padding: 14, borderRadius: 18 }, haji: { alignSelf: 'flex-start', backgroundColor: '#122238' }, user: { alignSelf: 'flex-end', backgroundColor: '#1d6b55' }, bubbleText: { color: '#f4f7fb', fontSize: 16, lineHeight: 24 },
-  approval: { color: '#ffd166', marginTop: 8, fontSize: 13 }, messageImage: { width: 180, height: 180, borderRadius: 14, marginBottom: 8 }, preview: { width: 180, height: 180, borderRadius: 16, alignSelf: 'flex-end' },
+  approval: { color: '#ffd166', marginTop: 8, fontSize: 13 }, approve: { marginTop: 10, paddingVertical: 10, paddingHorizontal: 18, borderRadius: 12, backgroundColor: '#1d8b68', alignItems: 'center' },
+  messageImage: { width: 180, height: 180, borderRadius: 14, marginBottom: 8 }, preview: { width: 180, height: 180, borderRadius: 16, alignSelf: 'flex-end' },
   composer: { flexDirection: 'row', alignItems: 'flex-end', padding: 12, gap: 8, borderTopWidth: 1, borderTopColor: '#17263a' }, iconButton: { width: 42, height: 42, borderRadius: 21, backgroundColor: '#122238', alignItems: 'center', justifyContent: 'center' },
   input: { flex: 1, minHeight: 44, maxHeight: 110, paddingHorizontal: 15, paddingVertical: 11, color: '#fff', backgroundColor: '#101c2c', borderRadius: 22, textAlign: 'right' }, voice: { width: 42, height: 42, borderRadius: 21, backgroundColor: '#2457a6', alignItems: 'center', justifyContent: 'center' }, send: { width: 42, height: 42, borderRadius: 21, backgroundColor: '#1d8b68', alignItems: 'center', justifyContent: 'center' }, white: { color: '#fff', fontSize: 18 },
 });
