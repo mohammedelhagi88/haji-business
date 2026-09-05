@@ -6,6 +6,7 @@ from dataclasses import asdict
 from typing import Any
 from uuid import uuid4
 
+from .ai_provider import AIProvider
 from .commands import CommandEngine
 from .memory import MemoryStore
 from .models import ApprovalRequest, RiskLevel, Task
@@ -15,25 +16,17 @@ from .tasks import TaskManager
 
 
 class HajiAgent:
-    """Deterministic local agent with approval tracking.
+    """Agent with local commands, persistent context, optional AI, and safety gates."""
 
-    Open-ended reasoning can be supplied later through a provider adapter. This
-    layer remains the safety boundary: financial/sensitive requests are queued
-    for explicit approval and are never executed by the router itself.
-    """
-
-    def __init__(
-        self,
-        memory: MemoryStore | Any | None = None,
-        tasks: TaskManager | None = None,
-        runtime: HajiRuntime | None = None,
-        permissions: PermissionGate | None = None,
-    ) -> None:
+    def __init__(self, memory: MemoryStore | Any | None = None, tasks: TaskManager | None = None,
+                 runtime: HajiRuntime | None = None, permissions: PermissionGate | None = None,
+                 provider: AIProvider | None = None) -> None:
         self.memory = memory or MemoryStore()
         self.tasks = tasks or TaskManager()
         self.runtime = runtime or HajiRuntime()
         self.permissions = permissions or PermissionGate()
         self.commands = CommandEngine(self.permissions)
+        self.provider = provider
         self._approvals: dict[str, ApprovalRequest] = {}
 
     @staticmethod
@@ -42,8 +35,7 @@ class HajiAgent:
 
     def _financial_request(self) -> tuple[str, ApprovalRequest]:
         request = self.permissions.request_approval(
-            action="financial_or_sensitive_action",
-            risk=RiskLevel.FINANCIAL,
+            action="financial_or_sensitive_action", risk=RiskLevel.FINANCIAL,
             reason="الأمر ممكن يسبب التزام مالي؛ نحتاج موافقتك الصريحة قبل التنفيذ.",
         )
         approval_id = uuid4().hex
@@ -58,17 +50,16 @@ class HajiAgent:
         self.runtime.emit(RuntimeEvent("approval.granted", {"approval_id": approval_id}))
         return {"ok": True, "approvalId": approval_id, "approval": asdict(request)}
 
-    def handle(self, text: str = "", image: Any | None = None) -> dict[str, Any]:
+    def handle(self, text: str = "", image: bytes | None = None) -> dict[str, Any]:
         text = (text or "").strip()
         self.runtime.emit(RuntimeEvent("agent.message", {"text": text, "has_image": image is not None}))
         if text:
             self.memory.set("last_user_message", text)
 
-        if image is not None and not text:
-            return {"text": "وصلتني الصورة يا حاجي. الصورة جاهزة للربط بمزود الرؤية.", "requiresApproval": False}
-
-        if not text:
-            return {"text": "قولّي شن تبي نديرلك.", "requiresApproval": False}
+        if self._has(text, "اشترى", "شراء", "بيع", "صفقة", "تداول", "حول", "تحويل", "ادفع", "دفع"):
+            approval_id, request = self._financial_request()
+            return {"text": "نقدر نحلل ونجهزلك العملية، لكن التنفيذ المالي يحتاج موافقتك الصريحة أولاً.",
+                    "requiresApproval": True, "approvalId": approval_id, "approval": asdict(request)}
 
         if self._has(text, "ديرلي مهمة", "ضيف مهمة", "أضف مهمة", "ذكرني", "مهمة"):
             title = text
@@ -79,13 +70,8 @@ class HajiAgent:
 
         if self._has(text, "شن المهام", "المهام", "قائمة المهام", "مهامي"):
             items = self.tasks.list()
-            if not items:
-                return {"text": "ما عندكش مهام مسجلة حالياً.", "requiresApproval": False, "tasks": []}
-            return {
-                "text": "هذي مهامك: " + "، ".join(f"{i + 1}. {task.title}" for i, task in enumerate(items)),
-                "requiresApproval": False,
-                "tasks": [asdict(task) for task in items],
-            }
+            return {"text": "ما عندكش مهام مسجلة حالياً." if not items else "هذي مهامك: " + "، ".join(f"{i + 1}. {t.title}" for i, t in enumerate(items)),
+                    "requiresApproval": False, "tasks": [asdict(t) for t in items]}
 
         if self._has(text, "احفظ", "خلي في بالك"):
             value = text
@@ -98,16 +84,13 @@ class HajiAgent:
             last = self.memory.get("last_user_message")
             return {"text": f"آخر حاجة قلتها هي: {last}" if last else "ما عنديش رسالة محفوظة قبل هذي.", "requiresApproval": False}
 
-        if self._has(text, "اشترى", "شراء", "بيع", "صفقة", "تداول", "حول", "تحويل", "ادفع", "دفع"):
-            approval_id, request = self._financial_request()
-            return {
-                "text": "نقدر نحلل ونجهزلك العملية، لكن التنفيذ المالي يحتاج موافقتك الصريحة أولاً.",
-                "requiresApproval": True,
-                "approvalId": approval_id,
-                "approval": asdict(request),
-            }
+        if self.provider is not None and (text or image):
+            try:
+                answer = self.provider.chat(text or "حلل الصورة ووضحلي محتواها.", image)
+                return {"text": answer, "requiresApproval": False, "ai": True}
+            except Exception as exc:
+                self.runtime.emit(RuntimeEvent("agent.provider_error", {"error": str(exc)}))
 
         if image is not None:
-            return {"text": f"وصلتني الصورة. فهمت طلبك: {text}.", "requiresApproval": False}
-
-        return {"text": f"فهمتك يا حاجي: {text}.", "requiresApproval": False}
+            return {"text": f"وصلتني الصورة{('، وطلبك: ' + text) if text else ''}. مزود الرؤية مش مفعّل حالياً.", "requiresApproval": False}
+        return {"text": f"فهمتك يا حاجي: {text}" if text else "قولّي شن تبي نديرلك.", "requiresApproval": False}
