@@ -41,9 +41,7 @@ class TradingEngine:
         if signal.direction == 0 or signal.confidence < self.config.min_confidence:
             return None
 
-        atr_values = atr(
-            snapshot.high, snapshot.low, snapshot.close, p["atr"]
-        )
+        atr_values = atr(snapshot.high, snapshot.low, snapshot.close, p["atr"])
         if not atr_values:
             return None
         entry = snapshot.close[-1]
@@ -51,6 +49,8 @@ class TradingEngine:
             "BUY" if signal.direction > 0 else "SELL",
             entry,
             atr_values[-1],
+            atr_stop_multiplier=self.config.atr_stop_multiplier,
+            risk_reward_ratio=self.config.risk_reward_ratio,
         )
         return TradeCandidate(
             symbol=snapshot.symbol,
