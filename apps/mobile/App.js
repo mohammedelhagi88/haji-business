@@ -24,8 +24,10 @@ export default function App() {
     };
     refresh();
     const timer = setInterval(refresh, 15000);
-    return () => { active = false; clearInterval(timer); if (recording) recording.stopAndUnloadAsync().catch(() => {}); };
-  }, [recording]);
+    return () => { active = false; clearInterval(timer); };
+  }, []);
+
+  useEffect(() => () => { if (recording) recording.stopAndUnloadAsync().catch(() => {}); }, [recording]);
 
   const speak = (text) => Speech.speak(text, { language: 'ar', rate: 0.95 });
 
@@ -40,7 +42,7 @@ export default function App() {
       const answer = result.text || result.message || 'تم استلام الطلب.';
       setMessages((items) => [...items, { role: 'haji', text: answer, approval: result.requiresApproval, approvalId: result.approvalId }]);
       speak(answer);
-    } catch (error) {
+    } catch (_) {
       const answer = 'صار خلل في الاتصال بحاجي. الطلب ما تنفذش.';
       setMessages((items) => [...items, { role: 'haji', text: answer }]); speak(answer);
     } finally { setBusy(false); }
@@ -69,7 +71,7 @@ export default function App() {
       const answer = result.text || result.message || (result.transcript ? `فهمتك: ${result.transcript}` : 'وصلني التسجيل، لكن تحويل الصوت لنص مش مفعّل في الخادم حالياً.');
       setMessages((items) => [...items, { role: 'haji', text: `${transcript}${transcript ? '\n\n' : ''}${answer}`, approval: result.requiresApproval, approvalId: result.approvalId }]);
       speak(answer);
-    } catch (error) {
+    } catch (_) {
       const answer = 'ما قدرتش نعالج التسجيل الصوتي حالياً.';
       setMessages((items) => [...items, { role: 'haji', text: answer }]); speak(answer);
     } finally { setBusy(false); }
@@ -80,8 +82,8 @@ export default function App() {
     setApprovalBusy(approvalId);
     try {
       const result = await approveWithHaji(approvalId);
-      setMessages((items) => items.map((item, i) => i === index ? { ...item, approval: false, approved: result.ok, text: `${item.text}\n\n✅ تمت الموافقة.` } : item));
-    } catch (error) { setMessages((items) => [...items, { role: 'haji', text: 'ما قدرتش نسجل الموافقة حالياً.' }]); }
+      setMessages((items) => items.map((item, i) => i === index ? { ...item, approval: false, approved: result.ok, text: `${item.text}\n\n${result.ok ? '✅ تمت الموافقة.' : '❌ الموافقة ما تمت.'}` } : item));
+    } catch (_) { setMessages((items) => [...items, { role: 'haji', text: 'ما قدرتش نسجل الموافقة حالياً.' }]); }
     finally { setApprovalBusy(null); }
   };
 
@@ -98,7 +100,7 @@ export default function App() {
         result = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ['images'], quality: 0.85 });
       }
       if (!result.canceled && result.assets?.[0]?.uri) setImageUri(result.assets[0].uri);
-    } catch (error) { setMessages((items) => [...items, { role: 'haji', text: 'ما قدرتش نفتح الكاميرا أو الصور حالياً.' }]); }
+    } catch (_) { setMessages((items) => [...items, { role: 'haji', text: 'ما قدرتش نفتح الكاميرا أو الصور حالياً.' }]); }
   };
 
   return (
