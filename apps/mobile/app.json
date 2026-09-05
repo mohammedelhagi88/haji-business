@@ -5,8 +5,16 @@
     "version": "0.1.0",
     "orientation": "portrait",
     "userInterfaceStyle": "dark",
-    "ios": { "supportsTablet": true },
-    "android": { "adaptiveIcon": { "backgroundColor": "#07111f" } },
+    "ios": {
+      "supportsTablet": true,
+      "infoPlist": {
+        "NSMicrophoneUsageDescription": "حاجي يحتاج الميكروفون باش يسمع أوامرك الصوتية."
+      }
+    },
+    "android": {
+      "permissions": ["RECORD_AUDIO"],
+      "adaptiveIcon": { "backgroundColor": "#07111f" }
+    },
     "plugins": ["expo-image-picker"]
   }
 }
