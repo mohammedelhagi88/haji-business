@@ -1,0 +1,30 @@
+# Secrets and local environment
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.crt
+
+# Local databases / runtime state
+*.sqlite3
+*.sqlite
+*.db
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+venv/
+
+# Node / Expo
+node_modules/
+.expo/
+dist/
+web-build/
+
+# OS/editor
+.DS_Store
+.vscode/
+.idea/
