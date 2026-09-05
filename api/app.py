@@ -9,6 +9,7 @@ from email.policy import default
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from core.agent import HajiAgent
+from core.ai_provider import provider_from_env
 from core.persistent_memory import PersistentMemoryStore
 from core.runtime import HajiRuntime
 from core.tasks import TaskManager
@@ -19,7 +20,8 @@ class HajiApp:
         self.runtime = HajiRuntime()
         self.memory = PersistentMemoryStore(os.getenv("HAJI_MEMORY_DB", "haji_memory.sqlite3"))
         self.tasks = TaskManager()
-        self.agent = HajiAgent(memory=self.memory, tasks=self.tasks, runtime=self.runtime)
+        self.provider = provider_from_env()
+        self.agent = HajiAgent(memory=self.memory, tasks=self.tasks, runtime=self.runtime, provider=self.provider)
         self.runtime.start()
 
     def message(self, text: str, image: bytes | None = None) -> dict:
@@ -49,25 +51,40 @@ class Handler(BaseHTTPRequestHandler):
             length = 0
         return self.rfile.read(max(0, length))
 
-    def _parse_multipart(self, raw: bytes, content_type: str) -> tuple[str, bytes | None]:
+    def _parse_multipart(self, raw: bytes, content_type: str) -> dict[str, bytes]:
         header = f"Content-Type: {content_type}\r\nMIME-Version: 1.0\r\n\r\n".encode()
         message = BytesParser(policy=default).parsebytes(header + raw)
-        text = ""
-        image: bytes | None = None
+        fields: dict[str, bytes] = {}
         if message.is_multipart():
             for part in message.iter_parts():
                 name = part.get_param("name", header="content-disposition")
-                payload = part.get_payload(decode=True) or b""
-                if name == "text":
-                    text = payload.decode("utf-8", errors="replace")
-                elif name == "image":
-                    image = payload
-        return text, image
+                if name:
+                    fields[name] = part.get_payload(decode=True) or b""
+        return fields
 
     def do_POST(self) -> None:
         if self.path.startswith("/v1/agent/approval/"):
             approval_id = self.path.rsplit("/", 1)[-1]
             self._json(200, app.approve(approval_id))
+            return
+        if self.path == "/v1/agent/voice":
+            raw = self._read_body()
+            content_type = self.headers.get("Content-Type", "audio/m4a")
+            if not raw:
+                self._json(400, {"error": "empty_audio"})
+                return
+            if app.provider is None:
+                self._json(503, {"error": "ai_provider_not_configured", "text": "الصوت وصل، لكن مزود الذكاء مش مفعّل على السيرفر."})
+                return
+            try:
+                text = app.provider.transcribe(raw, content_type.split(";", 1)[0])
+            except NotImplementedError:
+                self._json(501, {"error": "transcription_not_implemented"})
+                return
+            except Exception as exc:
+                self._json(502, {"error": "transcription_failed", "detail": str(exc)})
+                return
+            self._json(200, {"text": text, **app.message(text)})
             return
         if self.path != "/v1/agent/message":
             self._json(404, {"error": "not_found"})
@@ -89,14 +106,15 @@ class Handler(BaseHTTPRequestHandler):
                 return
         elif "multipart/form-data" in content_type:
             try:
-                text, image = self._parse_multipart(raw, content_type)
+                fields = self._parse_multipart(raw, content_type)
+                text = fields.get("text", b"").decode("utf-8", errors="replace")
+                image = fields.get("image")
             except Exception:
                 self._json(400, {"error": "invalid_multipart"})
                 return
         else:
             self._json(415, {"error": "unsupported_content_type"})
             return
-
         self._json(200, app.message(text, image))
 
     def do_GET(self) -> None:
