@@ -21,6 +21,10 @@ class TradingConfig:
     # Maximum total risk budget across the four positions.
     max_total_risk: float = 0.04
 
+    # ATR-based exit controls; editable without changing the trading engine.
+    atr_stop_multiplier: float = 1.5
+    risk_reward_ratio: float = 2.0
+
     # Indicator periods can be changed without changing the engine.
     periods: dict[str, int] = field(default_factory=lambda: {
         "sma_fast": 20,
@@ -46,3 +50,7 @@ class TradingConfig:
             raise ValueError("max_total_risk must be in (0, 1]")
         if self.max_positions * self.max_risk_per_trade > self.max_total_risk:
             raise ValueError("position risk can exceed total risk budget")
+        if self.atr_stop_multiplier <= 0:
+            raise ValueError("atr_stop_multiplier must be positive")
+        if self.risk_reward_ratio <= 0:
+            raise ValueError("risk_reward_ratio must be positive")
