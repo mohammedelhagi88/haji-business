@@ -3,17 +3,29 @@ import { SafeAreaView, View, Text, TextInput, Pressable, Image, ScrollView, Styl
 import * as ImagePicker from 'expo-image-picker';
 import { Audio } from 'expo-av';
 import * as Speech from 'expo-speech';
-import { approveWithHaji, sendToHaji, sendVoiceToHaji } from './src/agent';
+import { approveWithHaji, getNotifications, sendToHaji, sendVoiceToHaji } from './src/agent';
 
 export default function App() {
   const [message, setMessage] = useState('');
   const [messages, setMessages] = useState([{ role: 'haji', text: 'هلا بيك 👋 أنا حاجي. شن تبي نديرلك اليوم؟' }]);
+  const [notifications, setNotifications] = useState([]);
   const [imageUri, setImageUri] = useState(null);
   const [recording, setRecording] = useState(null);
   const [busy, setBusy] = useState(false);
   const [approvalBusy, setApprovalBusy] = useState(null);
 
-  useEffect(() => () => { if (recording) recording.stopAndUnloadAsync().catch(() => {}); }, [recording]);
+  useEffect(() => {
+    let active = true;
+    const refresh = async () => {
+      try {
+        const result = await getNotifications();
+        if (active && Array.isArray(result.notifications)) setNotifications(result.notifications);
+      } catch (_) {}
+    };
+    refresh();
+    const timer = setInterval(refresh, 15000);
+    return () => { active = false; clearInterval(timer); if (recording) recording.stopAndUnloadAsync().catch(() => {}); };
+  }, [recording]);
 
   const speak = (text) => Speech.speak(text, { language: 'ar', rate: 0.95 });
 
@@ -78,28 +90,24 @@ export default function App() {
       let result;
       if (source === 'camera') {
         const permission = await ImagePicker.requestCameraPermissionsAsync();
-        if (!permission.granted) {
-          setMessages((items) => [...items, { role: 'haji', text: 'نحتاج إذن الكاميرا باش نصوّر الصورة.' }]);
-          return;
-        }
+        if (!permission.granted) { setMessages((items) => [...items, { role: 'haji', text: 'نحتاج إذن الكاميرا باش نصوّر الصورة.' }]); return; }
         result = await ImagePicker.launchCameraAsync({ mediaTypes: ['images'], quality: 0.85 });
       } else {
         const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
-        if (!permission.granted) {
-          setMessages((items) => [...items, { role: 'haji', text: 'نحتاج إذن الصور باش نختار صورة من الجهاز.' }]);
-          return;
-        }
+        if (!permission.granted) { setMessages((items) => [...items, { role: 'haji', text: 'نحتاج إذن الصور باش نختار صورة من الجهاز.' }]); return; }
         result = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ['images'], quality: 0.85 });
       }
       if (!result.canceled && result.assets?.[0]?.uri) setImageUri(result.assets[0].uri);
-    } catch (error) {
-      setMessages((items) => [...items, { role: 'haji', text: 'ما قدرتش نفتح الكاميرا أو الصور حالياً.' }]);
-    }
+    } catch (error) { setMessages((items) => [...items, { role: 'haji', text: 'ما قدرتش نفتح الكاميرا أو الصور حالياً.' }]); }
   };
 
   return (
     <SafeAreaView style={styles.safe}>
-      <View style={styles.header}><View><Text style={styles.title}>حاجي AI</Text><Text style={styles.status}>● متصل وجاهز</Text></View><Text style={styles.brain}>🧠</Text></View>
+      <View style={styles.header}>
+        <View><Text style={styles.title}>حاجي AI</Text><Text style={styles.status}>● متصل وجاهز</Text></View>
+        <View style={styles.headerRight}><View style={styles.bell}><Text>🔔</Text>{notifications.length > 0 && <Text style={styles.badge}>{Math.min(notifications.length, 99)}</Text>}</View><Text style={styles.brain}>🧠</Text></View>
+      </View>
+      {notifications.length > 0 && <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.notifications}>{notifications.slice(-5).reverse().map((item, index) => <View key={index} style={styles.notification}><Text style={styles.notificationTitle}>{item.title || 'حاجي'}</Text><Text style={styles.notificationText} numberOfLines={2}>{item.message || ''}</Text></View>)}</ScrollView>}
       <ScrollView contentContainerStyle={styles.chat}>
         {messages.map((item, index) => <View key={index} style={[styles.bubble, item.role === 'user' ? styles.user : styles.haji]}>
           {item.image && <Image source={{ uri: item.image }} style={styles.messageImage} />}
@@ -121,10 +129,8 @@ export default function App() {
 
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: '#07111f' }, header: { padding: 22, paddingTop: 28, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', borderBottomWidth: 1, borderBottomColor: '#17263a' },
-  title: { color: '#fff', fontSize: 28, fontWeight: '800' }, status: { color: '#55d68a', marginTop: 4, fontSize: 13 }, brain: { fontSize: 30 }, chat: { padding: 18, gap: 12, paddingBottom: 25 },
-  bubble: { maxWidth: '84%', padding: 14, borderRadius: 18 }, haji: { alignSelf: 'flex-start', backgroundColor: '#122238' }, user: { alignSelf: 'flex-end', backgroundColor: '#1d6b55' }, bubbleText: { color: '#f4f7fb', fontSize: 16, lineHeight: 24 },
-  approval: { color: '#ffd166', marginTop: 8, fontSize: 13 }, approve: { marginTop: 10, paddingVertical: 10, paddingHorizontal: 18, borderRadius: 12, backgroundColor: '#1d8b68', alignItems: 'center' },
-  messageImage: { width: 180, height: 180, borderRadius: 14, marginBottom: 8 }, preview: { width: 180, height: 180, borderRadius: 16, alignSelf: 'flex-end' },
-  composer: { flexDirection: 'row', alignItems: 'flex-end', padding: 12, gap: 8, borderTopWidth: 1, borderTopColor: '#17263a' }, iconButton: { width: 42, height: 42, borderRadius: 21, backgroundColor: '#122238', alignItems: 'center', justifyContent: 'center' },
-  input: { flex: 1, minHeight: 44, maxHeight: 110, paddingHorizontal: 15, paddingVertical: 11, color: '#fff', backgroundColor: '#101c2c', borderRadius: 22, textAlign: 'right' }, voice: { width: 42, height: 42, borderRadius: 21, backgroundColor: '#2457a6', alignItems: 'center', justifyContent: 'center' }, recording: { backgroundColor: '#a63a3a' }, send: { width: 42, height: 42, borderRadius: 21, backgroundColor: '#1d8b68', alignItems: 'center', justifyContent: 'center' }, white: { color: '#fff', fontSize: 18 },
+  title: { color: '#fff', fontSize: 28, fontWeight: '800' }, status: { color: '#55d68a', marginTop: 4, fontSize: 13 }, headerRight: { flexDirection: 'row', alignItems: 'center', gap: 14 }, bell: { position: 'relative', width: 34, alignItems: 'center' }, badge: { position: 'absolute', top: -7, right: -4, minWidth: 18, height: 18, paddingHorizontal: 4, borderRadius: 9, backgroundColor: '#d84b4b', color: '#fff', fontSize: 11, fontWeight: '800', textAlign: 'center' }, brain: { fontSize: 30 },
+  notifications: { paddingHorizontal: 14, paddingVertical: 8, gap: 8 }, notification: { width: 210, padding: 10, borderRadius: 12, backgroundColor: '#101c2c', borderWidth: 1, borderColor: '#1d3048' }, notificationTitle: { color: '#fff', fontWeight: '700', marginBottom: 3 }, notificationText: { color: '#aebdcd', fontSize: 12, lineHeight: 17 },
+  chat: { padding: 18, gap: 12, paddingBottom: 25 }, bubble: { maxWidth: '84%', padding: 14, borderRadius: 18 }, haji: { alignSelf: 'flex-start', backgroundColor: '#122238' }, user: { alignSelf: 'flex-end', backgroundColor: '#1d6b55' }, bubbleText: { color: '#f4f7fb', fontSize: 16, lineHeight: 24 }, approval: { color: '#ffd166', marginTop: 8, fontSize: 13 }, approve: { marginTop: 10, paddingVertical: 10, paddingHorizontal: 18, borderRadius: 12, backgroundColor: '#1d8b68', alignItems: 'center' }, messageImage: { width: 180, height: 180, borderRadius: 14, marginBottom: 8 }, preview: { width: 180, height: 180, borderRadius: 16, alignSelf: 'flex-end' },
+  composer: { flexDirection: 'row', alignItems: 'flex-end', padding: 12, gap: 8, borderTopWidth: 1, borderTopColor: '#17263a' }, iconButton: { width: 42, height: 42, borderRadius: 21, backgroundColor: '#122238', alignItems: 'center', justifyContent: 'center' }, input: { flex: 1, minHeight: 44, maxHeight: 110, paddingHorizontal: 15, paddingVertical: 11, color: '#fff', backgroundColor: '#101c2c', borderRadius: 22, textAlign: 'right' }, voice: { width: 42, height: 42, borderRadius: 21, backgroundColor: '#2457a6', alignItems: 'center', justifyContent: 'center' }, recording: { backgroundColor: '#a63a3a' }, send: { width: 42, height: 42, borderRadius: 21, backgroundColor: '#1d8b68', alignItems: 'center', justifyContent: 'center' }, white: { color: '#fff', fontSize: 18 },
 });
