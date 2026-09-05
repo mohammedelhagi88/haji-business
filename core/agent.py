@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import asdict
+from datetime import datetime
 from typing import Any
 from uuid import uuid4
 
@@ -50,13 +51,7 @@ class HajiAgent:
         approval_id = uuid4().hex
         self._approvals[approval_id] = request
         if self.approval_store is not None:
-            self.approval_store.put(
-                approval_id,
-                request.action,
-                request.risk.value,
-                request.reason,
-                {},
-            )
+            self.approval_store.put(approval_id, request.action, request.risk.value, request.reason, {})
         return approval_id, request
 
     def approve(self, approval_id: str) -> dict[str, Any]:
@@ -68,7 +63,7 @@ class HajiAgent:
                 action=record["action"],
                 risk=RiskLevel(record["risk"]),
                 reason=record["reason"],
-                created_at=__import__("datetime").datetime.fromisoformat(record["created_at"]),
+                created_at=datetime.fromisoformat(record["created_at"]),
                 approved=False,
             )
         else:
